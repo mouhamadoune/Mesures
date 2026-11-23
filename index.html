@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mesures clients</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#f2c94c">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root{--denim:#1f3a5f;--tape:#f2c94c;--chalk:#f4f5f7;--ink:#1b1f27;--red:#b3392f;--green:#2e7d55;--line:#cfd5de}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.4 system-ui,sans-serif;background:var(--chalk);color:var(--ink)}
+header{background:var(--tape);color:var(--ink);padding:14px 16px 22px;position:relative}
+header h1{margin:0;font-size:1.3rem}
+header::after{content:"";position:absolute;left:0;right:0;bottom:0;height:12px;
+background:repeating-linear-gradient(90deg,var(--ink) 0 2px,transparent 2px 10px);
+-webkit-mask:linear-gradient(0deg,#000 40%,transparent 40%);mask:linear-gradient(0deg,#000 40%,transparent 40%)}
+#app{padding:14px;max-width:640px;margin:auto}
+button,.btn{font:inherit;border:0;border-radius:10px;padding:12px 14px;background:var(--denim);color:#fff;cursor:pointer;text-align:center;display:inline-block}
+button.alt,.btn{background:#fff;color:var(--denim);border:2px solid var(--denim)}
+button.red{background:var(--red)}button.green{background:var(--green)}
+.big{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.big button{padding:18px 4px;font-weight:700;font-size:.95rem}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.row>*{flex:1}
+input{font:inherit;width:100%;padding:11px;border:2px solid var(--line);border-radius:8px;background:#fff}
+input[readonly]{background:#e9ecf1;border-style:dashed}
+label{display:block;font-size:.85rem;margin:10px 0 3px;color:#444}
+h2{margin:6px 0}h3{margin:20px 0 0;padding-bottom:4px;border-bottom:3px solid var(--tape)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
+#lst{display:flex;flex-direction:column;gap:8px;max-height:166px;overflow-y:auto;margin:10px 0 4px;-webkit-overflow-scrolling:touch}
+.item{flex:0 0 50px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:0 12px;display:flex;align-items:center;gap:10px;cursor:pointer;overflow:hidden}
+.item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item b{min-width:44px;color:var(--denim)}
+.hint{background:#fff7d6;padding:10px;border-radius:8px;margin:8px 0}
+.fld{display:flex;gap:6px;margin:6px 0}.fld button:first-child{flex:1;text-align:left}
+.fld button:last-child{background:var(--red);flex:0 0 46px}
+.muted{color:#667;font-size:.85rem}
+#st{padding:8px 16px;font-size:.85rem;background:#e4efe9;color:#1d5a3a}
+#st.err{background:#f8dedb;color:#8c2b22;cursor:pointer}
+#st:empty{display:none}
+</style>
+</head>
+<body>
+<header><h1>Mesures clients</h1></header>
+<div id="st"></div>
+<div id="app"></div>
+<script>
+const KEY = "mesuresClientsDB";
+const DEF = {
+  "Chemise": ["Cou", "Épaule", "Poitrine", "Main (manche)", "Longueur"],
+  "Pantalon": ["Taille", "Hanche", "Cuisse", "Entrejambe", "Longueur", "Bas"]
+};
+let db = load();
+let mode = "";
+const app = document.getElementById("app");
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const key = (c, n) => c + " - " + n;
+
+function load() {
+  try {
+    const d = JSON.parse(localStorage.getItem(KEY));
+    if (d && d.fields && d.clients) return d;
+  } catch (e) {}
+  return { fields: JSON.parse(JSON.stringify(DEF)), clients: [] };
+}
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) {}
+  if (handle) chain = chain.then(writeFile);
+}
+function nextNum() {
+  const n = db.clients.map(c => parseInt(c.num)).filter(x => !isNaN(x));
+  return String(n.length ? Math.max(...n) + 1 : 1);
+}
+
+/* ---------- Accueil ---------- */
+function home() {
+  mode = "";
+  app.innerHTML = `
+  <div class="big">
+    <button class="green" onclick="addClient()">➕ Ajouter</button>
+    <button onclick="pick('edit')">✏️ Modifier</button>
+    <button class="red" onclick="pick('del')">🗑️ Supprimer</button>
+  </div>
+  <input id="q" placeholder="Rechercher par nom ou numéro" oninput="renderList()" autocomplete="off">
+  <div id="lst"></div>
+  <div id="cnt" class="muted"></div>
+  <div class="row">
+    <button class="alt" onclick="settings()">⚙️ Mesures</button>
+    <button class="alt" onclick="exportCSV()">⬇️ Copie</button>
+    ${FS ? `<button class="alt" onclick="welcome()">📂 Changer de base</button>` : `<label class="btn" style="margin:0">⬆️ Importer<input type="file" accept=".csv,text/csv,text/plain" hidden onchange="importCSV(this)"></label>`}
+  </div>
+  <p class="muted">${FS ? "Chaque modification est enregistrée automatiquement dans votre fichier CSV, qui s’ouvre dans Excel." : "Ce navigateur ne peut pas enregistrer dans un fichier : utilisez Chrome à jour. En attendant, exportez régulièrement."}</p>`;
+  renderList();
+}
+function pick(m) {
+  mode = m;
+  app.innerHTML = `<h2>${m === "edit" ? "Modifier un client" : "Supprimer un client"}</h2>
+  <input id="q" placeholder="Rechercher par nom ou numéro" oninput="renderList()" autocomplete="off">
+  <div id="lst"></div>
+  <div id="cnt" class="muted"></div>
+  <div class="row"><button class="alt" onclick="home()">Retour</button></div>`;
+  renderList();
+  document.getElementById("q").focus();
+}
+const norm = s => String(s == null ? "" : s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+function renderList() {
+  const q = norm(document.getElementById("q").value);
+  let rows = db.clients.map((c, i) => [c, i]).reverse();
+  if (q) {
+    const score = ([c]) => {
+      const n = norm(c.num), m = norm(c.nom);
+      return n === q ? 0 : n.startsWith(q) ? 1 : m.startsWith(q) ? 2 : m.split(/\s+/).some(w => w.startsWith(q)) ? 3 : (n + " " + m).includes(q) ? 4 : 9;
+    };
+    rows = rows.filter(r => score(r) < 9).sort((a, b) => score(a) - score(b));
+  }
+  const box = document.getElementById("lst");
+  box.innerHTML = rows.length
+    ? rows.map(([c, i]) => `<div class="item" onclick="sel(${i})"><b>${esc(c.num)}</b><span>${esc(c.nom)}</span></div>`).join("")
+    : `<p class="muted">${q ? "Aucun client trouvé." : "Aucun client. Touchez « Ajouter » pour commencer."}</p>`;
+  box.scrollTop = 0;
+  document.getElementById("cnt").textContent = rows.length > 3 ? rows.length + " clients · faites défiler pour voir les autres" : "";
+}
+function sel(i) { showForm(i, mode === "edit" ? "edit" : mode === "del" ? "del" : "view"); }
+function addClient() { showForm(-1, "new"); }
+
+/* ---------- Fiche client ---------- */
+function showForm(i, kind) {
+  const c = i >= 0 ? db.clients[i] : { num: nextNum(), nom: "", m: {} };
+  const ro = (kind === "view" || kind === "del") ? "readonly" : "";
+  const title = { "new": "Nouveau client", edit: "Modifier le client", view: "Fiche client", del: "Supprimer ce client ?" }[kind];
+  let h = `<h2>${title}</h2>
+  <label>Numéro</label><input id="num" value="${esc(c.num)}" ${ro}>
+  <label>Nom</label><input id="nom" value="${esc(c.nom)}" ${ro}>`;
+  for (const cat in db.fields) {
+    h += `<h3>${esc(cat)}</h3><div class="grid">`;
+    for (const n of db.fields[cat]) {
+      h += `<div><label>${esc(n)}</label><input inputmode="decimal" data-k="${esc(key(cat, n))}" value="${esc(c.m[key(cat, n)])}" ${ro}></div>`;
+    }
+    h += `</div>`;
+  }
+  h += `<div class="row">`;
+  if (kind === "new" || kind === "edit") h += `<button class="green" onclick="saveClient(${i})">Enregistrer</button><button class="alt" onclick="home()">Annuler</button>`;
+  if (kind === "view") h += `<button onclick="showForm(${i},'edit')">Modifier</button><button class="alt" onclick="home()">Retour</button>`;
+  if (kind === "del") h += `<button class="red" onclick="delClient(${i})">Supprimer définitivement</button><button class="alt" onclick="home()">Annuler</button>`;
+  h += `</div>`;
+  app.innerHTML = h;
+  window.scrollTo(0, 0);
+}
+function saveClient(i) {
+  const num = document.getElementById("num").value.trim();
+  const nom = document.getElementById("nom").value.trim();
+  if (!num || !nom) return alert("Le numéro et le nom sont obligatoires.");
+  if (db.clients.some((c, j) => j !== i && c.num === num)) return alert("Ce numéro existe déjà.");
+  const m = {};
+  document.querySelectorAll("[data-k]").forEach(el => { if (el.value.trim() !== "") m[el.dataset.k] = el.value.trim(); });
+  const c = { num, nom, m };
+  if (i >= 0) db.clients[i] = c; else db.clients.push(c);
+  save(); home();
+}
+function delClient(i) {
+  db.clients.splice(i, 1);
+  save(); home();
+}
+
+/* ---------- Personnaliser les mesures ---------- */
+function settings() {
+  const cats = Object.keys(db.fields);
+  let h = `<h2>Personnaliser les mesures</h2><p class="muted">Touchez un nom pour le renommer, ✖ pour le retirer.</p>`;
+  cats.forEach((cat, ci) => {
+    h += `<h3>${esc(cat)}</h3>`;
+    db.fields[cat].forEach((n, fi) => {
+      h += `<div class="fld"><button class="alt" onclick="renField(${ci},${fi})">${esc(n)}</button><button onclick="delField(${ci},${fi})">✖</button></div>`;
+    });
+    h += `<div class="row"><button class="alt" onclick="addField(${ci})">➕ Ajouter une mesure</button><button class="alt" onclick="delCat(${ci})">Retirer ${esc(cat)}</button></div>`;
+  });
+  h += `<div class="row"><button class="green" onclick="addCat()">➕ Nouvelle catégorie (ex. Veste)</button></div>
+  <div class="row"><button onclick="home()">Terminer</button></div>`;
+  app.innerHTML = h;
+}
+const catAt = ci => Object.keys(db.fields)[ci];
+function addField(ci) {
+  const cat = catAt(ci), n = (prompt("Nom de la nouvelle mesure :") || "").trim();
+  if (!n) return;
+  if (db.fields[cat].includes(n)) return alert("Cette mesure existe déjà.");
+  db.fields[cat].push(n); save(); settings();
+}
+function renField(ci, fi) {
+  const cat = catAt(ci), old = db.fields[cat][fi];
+  const n = (prompt("Nouveau nom :", old) || "").trim();
+  if (!n || n === old) return;
+  if (db.fields[cat].includes(n)) return alert("Cette mesure existe déjà.");
+  db.fields[cat][fi] = n;
+  db.clients.forEach(c => { if (key(cat, old) in c.m) { c.m[key(cat, n)] = c.m[key(cat, old)]; delete c.m[key(cat, old)]; } });
+  save(); settings();
+}
+function delField(ci, fi) {
+  const cat = catAt(ci), n = db.fields[cat][fi];
+  if (!confirm("Retirer « " + n + " » ? Les valeurs déjà saisies seront perdues.")) return;
+  db.fields[cat].splice(fi, 1);
+  db.clients.forEach(c => delete c.m[key(cat, n)]);
+  save(); settings();
+}
+function addCat() {
+  const n = (prompt("Nom de la catégorie :") || "").trim();
+  if (!n) return;
+  if (db.fields[n]) return alert("Cette catégorie existe déjà.");
+  db.fields[n] = []; save(); settings();
+}
+function delCat(ci) {
+  const cat = catAt(ci);
+  if (!confirm("Retirer toute la catégorie « " + cat + " » et ses valeurs ?")) return;
+  db.fields[cat].forEach(n => db.clients.forEach(c => delete c.m[key(cat, n)]));
+  delete db.fields[cat]; save(); settings();
+}
+
+/* ---------- Tableau Excel (CSV) ---------- */
+function toCSV() {
+  const keys = [];
+  for (const cat in db.fields) db.fields[cat].forEach(n => keys.push(key(cat, n)));
+  const q = v => { v = String(v == null ? "" : v); return /[;"\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  const lines = [["Numéro", "Nom"].concat(keys).map(q).join(";")];
+  db.clients.forEach(c => lines.push([c.num, c.nom].concat(keys.map(k => c.m[k])).map(q).join(";")));
+  return lines.join("\r\n");
+}
+function exportCSV() {
+  const blob = new Blob(["\uFEFF" + toCSV()], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "mesures-clients.csv";
+  document.body.appendChild(a); a.click(); a.remove();
+}
+function parseCSV(t, d) {
+  const r = []; let row = [], f = "", q = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (q) { if (ch === '"') { if (t[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === d) { row.push(f); f = ""; }
+    else if (ch === "\n") { row.push(f); r.push(row); row = []; f = ""; }
+    else if (ch !== "\r") f += ch;
+  }
+  if (f !== "" || row.length) { row.push(f); r.push(row); }
+  return r;
+}
+function importCSV(input) {
+  const file = input.files[0]; if (!file) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    let t = String(rd.result).replace(/^\uFEFF/, "");
+    const first = t.split("\n")[0];
+    const d = (first.split(";").length >= first.split(",").length) ? ";" : ",";
+    const rows = parseCSV(t, d).filter(r => r.some(x => x.trim() !== ""));
+    if (rows.length < 2 || !/^num/i.test(rows[0][0].trim())) return alert("Fichier non reconnu. Utilisez un fichier exporté par cette application.");
+    const head = rows[0].map(h => h.trim());
+    head.slice(2).forEach(h => {
+      const p = h.indexOf(" - "); if (p < 1) return;
+      const cat = h.slice(0, p), n = h.slice(p + 3);
+      if (!db.fields[cat]) db.fields[cat] = [];
+      if (!db.fields[cat].includes(n)) db.fields[cat].push(n);
+    });
+    let added = 0, updated = 0;
+    rows.slice(1).forEach(r => {
+      const num = (r[0] || "").trim(), nom = (r[1] || "").trim();
+      if (!num) return;
+      const m = {};
+      head.forEach((h, k) => { if (k >= 2 && (r[k] || "").trim() !== "") m[h] = r[k].trim(); });
+      const j = db.clients.findIndex(c => c.num === num);
+      if (j >= 0) { db.clients[j] = { num, nom, m }; updated++; } else { db.clients.push({ num, nom, m }); added++; }
+    });
+    save(); home();
+    alert(added + " client(s) ajouté(s), " + updated + " mis à jour.");
+  };
+  rd.readAsText(file, "utf-8");
+}
+
+/* ---------- Base = fichier CSV, enregistrement automatique ---------- */
+const FS = "showOpenFilePicker" in window && "showSaveFilePicker" in window;
+const clone = o => JSON.parse(JSON.stringify(o));
+const CSVTYPE = [{ description: "Tableau CSV", accept: { "text/csv": [".csv"], "text/plain": [".txt"] } }];
+let handle = null, fname = "", chain = Promise.resolve();
+
+function setStatus(m, err) {
+  const s = document.getElementById("st");
+  s.textContent = m; s.className = err ? "err" : ""; s.onclick = err ? reconnect : null;
+}
+async function reconnect() {
+  try { if ((await handle.requestPermission({ mode: "readwrite" })) === "granted") await writeFile(); } catch (e) {}
+}
+async function writeFile() {
+  try {
+    const w = await handle.createWritable();
+    await w.write("\uFEFF" + toCSV());
+    await w.close();
+    setStatus("✔ Enregistré dans " + fname);
+  } catch (e) {
+    setStatus("⚠️ Enregistrement impossible. Touchez ici pour reconnecter la base.", true);
+  }
+}
+function idb() {
+  return new Promise((ok, no) => {
+    const r = indexedDB.open("mesuresFS", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("h");
+    r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error);
+  });
+}
+async function hPut(h) { try { const d = await idb(); d.transaction("h", "readwrite").objectStore("h").put(h, "base"); } catch (e) {} }
+async function hGet() {
+  try {
+    const d = await idb();
+    return await new Promise(ok => { const q = d.transaction("h").objectStore("h").get("base"); q.onsuccess = () => ok(q.result); q.onerror = () => ok(null); });
+  } catch (e) { return null; }
+}
+function decode(buf) {
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(buf); }
+  catch (e) { return new TextDecoder("windows-1252").decode(buf); }
+}
+function fromCSV(t) {
+  t = t.replace(/^\uFEFF/, "");
+  const first = t.split("\n")[0];
+  const d = first.split(";").length >= first.split(",").length ? ";" : ",";
+  const rows = parseCSV(t, d).filter(r => r.some(x => x.trim() !== ""));
+  if (!rows.length || !/^num/i.test(rows[0][0].trim())) return null;
+  const head = rows[0].map(h => h.trim()), clients = [];
+  let fields = {};
+  head.slice(2).forEach(h => {
+    const p = h.indexOf(" - "); if (p < 1) return;
+    const c = h.slice(0, p), n = h.slice(p + 3);
+    if (!fields[c]) fields[c] = [];
+    if (!fields[c].includes(n)) fields[c].push(n);
+  });
+  if (!Object.keys(fields).length) fields = clone(DEF);
+  rows.slice(1).forEach(r => {
+    const num = (r[0] || "").trim(); if (!num) return;
+    const m = {};
+    head.forEach((h, k) => { if (k >= 2 && (r[k] || "").trim() !== "") m[h] = r[k].trim(); });
+    clients.push({ num, nom: (r[1] || "").trim(), m });
+  });
+  return { fields, clients };
+}
+async function readFile() {
+  const t = decode(await (await handle.getFile()).arrayBuffer());
+  if (!t.trim()) { db = { fields: clone(DEF), clients: [] }; await writeFile(); }
+  else { const d = fromCSV(t); if (!d) throw new Error("format"); db = d; setStatus("✔ Base chargée : " + fname); }
+}
+
+function welcome() {
+  app.innerHTML = `<h2>Base de données</h2>
+  <p class="muted">Vos clients sont enregistrés dans un fichier CSV (lisible dans Excel), mis à jour automatiquement à chaque modification.</p>
+  <div class="row" style="flex-direction:column">
+    ${handle ? `<button class="green" onclick="resume()">Continuer avec « ${esc(fname)} »</button>` : ""}
+    <button onclick="createBase()">🆕 Créer une nouvelle base</button>
+    <button class="alt" onclick="openBase()">📂 Ouvrir une base existante</button>
+  </div>`;
+}
+async function resume() {
+  try {
+    const o = { mode: "readwrite" };
+    if ((await handle.queryPermission(o)) !== "granted" && (await handle.requestPermission(o)) !== "granted") throw new Error("permission");
+    await readFile(); home();
+  } catch (e) { alert("Impossible d’ouvrir la base. Choisissez-la de nouveau avec « Ouvrir une base existante »."); }
+}
+async function openBase() {
+  try {
+    const [h] = await showOpenFilePicker({ multiple: false });
+    try { await h.requestPermission({ mode: "readwrite" }); } catch (e) {}
+    handle = h; fname = h.name;
+    await readFile(); await hPut(h); home();
+  } catch (e) { if (e.name !== "AbortError") alert("Fichier non reconnu ou inaccessible. Utilisez un fichier créé par cette application."); }
+}
+async function createBase() {
+  try {
+    const h = await showSaveFilePicker({ suggestedName: "clients-mesures.csv", types: CSVTYPE });
+    if ((await h.getFile()).size > 0 && !confirm("Ce fichier contient déjà des données. Les remplacer par une base vide ?")) return;
+    handle = h; fname = h.name; db = { fields: clone(DEF), clients: [] };
+    await hPut(h); await writeFile(); home();
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    const keep = db; db = { fields: clone(DEF), clients: [] }; exportCSV(); db = keep;
+    alert("Ce téléphone ne permet pas de créer le fichier directement. Un fichier vide « mesures-clients.csv » vient d’être téléchargé : touchez maintenant « Ouvrir une base existante » et choisissez-le.");
+  }
+}
+async function start() {
+  if (!FS) { db = load(); return home(); }
+  handle = await hGet();
+  if (handle) {
+    fname = handle.name;
+    try { if ((await handle.queryPermission({ mode: "readwrite" })) === "granted") { await readFile(); return home(); } } catch (e) {}
+  }
+  welcome();
+}
+start();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+</script>
+</body>
+</html>
